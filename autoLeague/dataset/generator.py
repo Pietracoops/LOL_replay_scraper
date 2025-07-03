@@ -89,7 +89,7 @@ class DataGenerator(object):
                 time.sleep(0.05)
                 gameDuration = round(response.json()['info']['gameDuration'])
                 gameCreation = round(response.json()['info']['gameCreation'])
-                if (gameDuration >= 25*60) and (count < self.count) and self.is_in_recent_patch(self, gameCreation, patch_start_datetime):
+                if (gameDuration >= 25*60) and (count < self.count) and self.is_in_recent_patch(gameCreation, patch_start_datetime):
                     matchIdsOver15.append(matchId)
                     count = count + 1
                 else:
@@ -103,12 +103,25 @@ class DataGenerator(object):
     def get_tier_matchIds(self, queue, tier, division , max_ids, patch_start_datetime):
     
         # process : queue, tier, division -> summonerId(s)
-        summoners = self.get_summonerIds(self, queue , tier , division)
+        summoners = self.get_summonerIds(queue , tier , division)
         matchIds = []
 
-        # Gathering Match IDs
-        for summoner in summoners:
-            matchIds.extend(self.get_matchIds(self,summoner['puuid'],patch_start_datetime))
+        # # Gathering Match IDs
+        # for summoner in summoners:
+        #     matchIds.extend(self.get_matchIds(summoner['puuid'],patch_start_datetime))
+
+        progress_bar = tqdm(summoners, desc="Fetching match IDs")
+        for summoner in progress_bar:
+            try:
+
+                new_ids = self.get_matchIds(summoner['puuid'], patch_start_datetime)
+                matchIds.extend(new_ids)
+
+                # Update the bar again to show the new total count
+                progress_bar.set_postfix_str(f"Total Matches Found: {len(matchIds)}")
+
+            except Exception as e:
+                tqdm.write(f"Could not fetch matches for summoner with puuid {summoner.get('puuid', 'N/A')}: {e}")
 
         print(matchIds)
 

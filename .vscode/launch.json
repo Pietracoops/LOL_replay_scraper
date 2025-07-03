@@ -11,6 +11,13 @@
             "request": "launch",
             "program": "${workspaceFolder}/replay_scraper.py",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Replay Downloader Class",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/replay_downloader.py",
+            "console": "integratedTerminal"
         }
     ]
 }

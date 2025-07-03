@@ -65,7 +65,7 @@ class ReplayDownlader(object):
                 verify=False
             )
             response.raise_for_status()  # Raises HTTPError for bad responses (4xx or 5xx)
-            print("Download request successful:", response.status_code)
+            # print("Download request successful:", response.status_code)
             return response
         except requests.exceptions.RequestException as e:
             print(f"Error during download request: {e}")
