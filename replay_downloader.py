@@ -213,6 +213,14 @@ class LeagueDataCollector:
         self._download_replays()
         print("\n--- Download Pipeline Finished ---")
 
+    def get_match_timeline(self, matchId):
+        """
+        Executes the download pipeline:
+        1. Fetches match IDs.
+        2. Downloads replays.
+        """
+        self.dg.get_match_timeline(matchId)
+
     def run_pipeline(self):
         """
         Executes the full data collection pipeline:
@@ -232,7 +240,7 @@ class LeagueDataCollector:
 if __name__ == '__main__':
     # 1. CONFIGURE YOUR PARAMETERS HERE
     # ---------------------------------
-    MY_API_KEY = 'RGAPI-2dcc5ab1-943e-44d0-b8b2-30c8d2d4ffd0' # IMPORTANT: Replace with your key
+    MY_API_KEY = 'RGAPI-f7d0be47-ba48-469e-b4e4-7bb93673ffd1' # IMPORTANT: Replace with your key
     TARGET_REGION = 'NA1'
     
     # Get today's date in the required format
@@ -266,6 +274,8 @@ if __name__ == '__main__':
             dataset_dir=DATASET_OUTPUT_DIR,
             scraper_dir=SCRAPER_ASSETS_DIR
         )
+
+        data_collector.get_match_timeline("NA1_5318305918")
 
         # 3. RUN THE ENTIRE PIPELINE
         # ----------------------------

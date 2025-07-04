@@ -2,6 +2,7 @@ import requests
 import time
 from tqdm import tqdm
 from datetime import datetime
+from autoLeague.dataset.league_api_extractor import MatchTimelineParser
 
 '''데이터셋 생성기, 원하는 티어 입력해주면 해당 티어대의 리플레이들을 저장해준다.'''
 class DataGenerator(object):
@@ -126,5 +127,73 @@ class DataGenerator(object):
         print(matchIds)
 
         return matchIds
+    
+
+
+    def get_match_timeline(self, matchId):
+    
+        try:
+            response = requests.get(f"https://americas.api.riotgames.com/lol/match/v5/matches/{matchId}/timeline?api_key={self.api_key}")
+            timeline_data = response.json()
+        except:
+            pass
+
+
+        try:
+            response = requests.get(f"https://americas.api.riotgames.com/lol/match/v5/matches/{matchId}?api_key={self.api_key}")
+            match_data = response.json()
+        except:
+            pass
+        
+        print("Data fetched successfully.")
+        
+
+        parser = MatchTimelineParser(match_data=match_data, timeline_data=timeline_data)
+
+        # --- 1. Get and Display End-of-Game Summary ---
+        print("\n\n" + "="*20 + " END-OF-GAME SUMMARY " + "="*20)
+        end_game_summary = parser.get_end_of_game_summary()
+
+        # Separate teams
+        blue_team = sorted([p for p in end_game_summary if p['teamId'] == 100], key=lambda x: x['name'])
+        red_team = sorted([p for p in end_game_summary if p['teamId'] == 200], key=lambda x: x['name'])
+
+        for team, team_name in [(blue_team, "BLUE TEAM"), (red_team, "RED TEAM")]:
+            # Determine win/loss for the team
+            status = "VICTORY" if team and team[0]['win'] else "DEFEAT"
+            print(f"\n--- {team_name} ({status}) ---")
+            print(f"{'Player':<20} {'Champion':<15} {'KDA':<10} {'Damage':<8} {'Gold':<7} {'CS':<5} {'Vision':<5}")
+            print("-" * 80)
+            for player in team:
+                print(
+                    f"{player['name']:<20} "
+                    f"{player['champion']:<15} "
+                    f"{player['kda']:<10} "
+                    f"{player['damageToChamps']:<8} "
+                    f"{player['gold']:<7} "
+                    f"{player['cs']:<5} "
+                    f"{player['visionScore']:<5}"
+                )
+            # Print items for each player on a new line
+            print("  Items:")
+            for player in team:
+                final_items = [item for item in player['items'] if item != 'No Item']
+                print(f"    {player['name']:<18}: {', '.join(final_items)}")
+
+
+        # --- 2. Get and Display Key Timeline Events ---
+        print("\n\n" + "="*20 + " KEY TIMELINE EVENTS " + "="*21)
+        timeline_summary = parser.process_timeline()
+
+        for minute_data in timeline_summary:
+            minute = minute_data['minute']
+            # Only print minutes where something actually happened
+            if minute_data['events']:
+                print(f"\n--- MINUTE {minute} ---")
+                for event in minute_data['events']:
+                    print(event)
+
+
+        return None
     
     
