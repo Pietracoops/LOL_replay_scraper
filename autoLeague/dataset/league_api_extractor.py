@@ -28,6 +28,7 @@ class MatchTimelineParser:
         
         self.item_map = self._build_item_map()
         self.participant_map = self._build_participant_map()
+        self.perks_map = self._build_perk_map()
         self.MULTIKILL_WINDOW_MS = 10000
         self.MULTIKILL_NAMES = {2: "Double Kill", 3: "Triple Kill", 4: "Quadra Kill", 5: "Penta Kill"}
         self.skill_map = {1: 'Q', 2: 'W', 3: 'E', 4: 'R'}
@@ -57,6 +58,58 @@ class MatchTimelineParser:
         except requests.exceptions.RequestException as e:
             print(f"Error fetching item data: {e}")
             return {0: "No Item"}
+        
+    def _build_perk_map(self) -> dict:
+        """
+        Fetches the latest perk data from Riot's Data Dragon and builds a
+        map of {perk_id: perk_name}. This includes styles, main perks, and stat shards.
+        """
+        version = self._get_latest_game_version()
+        # The URL for rune data
+        perk_url = f"http://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/runesReforged.json"
+        
+        perk_map = {}
+        
+        try:
+            response = requests.get(perk_url)
+            response.raise_for_status()
+            rune_data = response.json()
+            
+            # Iterate through each rune style (e.g., Precision, Domination)
+            for style in rune_data:
+                # Add the style itself to the map (e.g., 8200: "Sorcery")
+                perk_map[style['id']] = style['name']
+                
+                # Iterate through the slots in the style (Keystone, row 1, row 2, etc.)
+                for slot in style['slots']:
+                    # Iterate through the actual runes in that slot
+                    for rune in slot['runes']:
+                        # Add the rune to the map (e.g., 8230: "Phase Rush")
+                        perk_map[rune['id']] = rune['name']
+
+            # Stat Perks (shards) are not in runesReforged.json, so we add them manually.
+            # The IDs you provided are correct for the match data API.
+            stat_perk_names = {
+                5008: 'Adaptive Force',
+                5007: 'Attack Speed',  # Note: API uses 5007, older DDragon used 5005
+                5002: 'Armor',
+                5003: 'Magic Resist',
+                5011: 'Armor', # Your data used this for defense
+                5013: 'Magic Resist' # Your data might use this for defense
+                # Add any others you encounter
+            }
+            perk_map.update(stat_perk_names)
+
+            # Add a value for unknown perks
+            perk_map[0] = "Unknown Perk"
+            
+            print("Successfully built perk map.")
+            return perk_map
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching perk data: {e}")
+            # Return a minimal map if the fetch fails
+            return {0: "Unknown Perk"}
 
     def _build_participant_map(self) -> dict:
         """
@@ -224,6 +277,33 @@ class MatchTimelineParser:
                 
         return multikill_events
 
+    def _process_perk_data(self, perks_data):
+
+        processed_perks = {
+            'primary_style': 'Unknown', 'primary_perks': [],
+            'secondary_style': 'Unknown', 'secondary_perks': [],
+            'stat_perks': []
+        }
+        
+        styles = perks_data.get('styles', [])
+        if len(styles) >= 2:
+            primary_style_info = styles[0]
+            processed_perks['primary_style'] = self.perks_map.get(primary_style_info['style'], 'Unknown Style')
+            processed_perks['primary_perks'] = [self.perks_map.get(sel['perk'], 'Unknown Perk') for sel in primary_style_info.get('selections', [])]
+
+            secondary_style_info = styles[1]
+            processed_perks['secondary_style'] = self.perks_map.get(secondary_style_info['style'], 'Unknown Style')
+            processed_perks['secondary_perks'] = [self.perks_map.get(sel['perk'], 'Unknown Perk') for sel in secondary_style_info.get('selections', [])]
+
+        stat_perks = perks_data.get('statPerks', {})
+        if stat_perks:
+            processed_perks['stat_perks'] = [
+                self.perks_map.get(stat_perks.get('offense', 0), 'Unknown'),
+                self.perks_map.get(stat_perks.get('flex', 0), 'Unknown'),
+                self.perks_map.get(stat_perks.get('defense', 0), 'Unknown')
+            ]
+        return processed_perks
+
     def get_end_of_game_summary(self) -> list[dict]:
         """
         **NEW METHOD**
@@ -248,9 +328,14 @@ class MatchTimelineParser:
                 item_id = p_data.get(f'item{i}', 0)
                 items.append(self.item_map.get(item_id, 'Unknown Item'))
 
+            perks_data = p_data.get('perks', {})
+            processed_perks = self._process_perk_data(perks_data)
+
             summary = {
                 'name': self.participant_map.get(p_id, 'Unknown'),
                 'champion': p_data.get('championName'),
+                'level': p_data.get('champLevel'),
+                'position': p_data.get('individualPosition'),
                 'win': p_data.get('win', False),
                 'kda': f"{p_data.get('kills', 0)}/{p_data.get('deaths', 0)}/{p_data.get('assists', 0)}",
                 'cs': p_data.get('totalMinionsKilled', 0) + p_data.get('neutralMinionsKilled', 0),
@@ -259,7 +344,8 @@ class MatchTimelineParser:
                 'visionScore': p_data.get('visionScore'),
                 'items': items,
                 'teamId': p_data.get('teamId'),
-                'multikills_str': ", ".join(multikill_parts) or "None"
+                'multikills_str': ", ".join(multikill_parts) or "None",
+                'perks': processed_perks
             }
             summaries.append(summary)
             
