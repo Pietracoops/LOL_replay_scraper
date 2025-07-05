@@ -28,6 +28,8 @@ class MatchTimelineParser:
         
         self.item_map = self._build_item_map()
         self.participant_map = self._build_participant_map()
+        self.MULTIKILL_WINDOW_MS = 10000
+        self.MULTIKILL_NAMES = {2: "Double Kill", 3: "Triple Kill", 4: "Quadra Kill", 5: "Penta Kill"}
         self.skill_map = {1: 'Q', 2: 'W', 3: 'E', 4: 'R'}
 
     def _get_latest_game_version(self) -> str:
@@ -71,48 +73,156 @@ class MatchTimelineParser:
             participant_map[p['participantId']] = name
         return participant_map
 
-    def _format_event(self, event: dict) -> str:
-        # This method remains the same as before
-        event_type = event.get('type')
-        timestamp_ms = event.get('timestamp', 0)
-        minute = timestamp_ms // 60000
-        second = (timestamp_ms % 60000) // 1000
-        time_str = f"{minute:02d}:{second:02d}"
+    def _format_champion_kill(self, event, multikill_timestamps):
+        killer_id = event.get('killerId', 0)
+        victim_id = event.get('victimId')
+        victim_name = self.participant_map.get(victim_id, "Unknown Victim")
+        
+        if killer_id == 0: # Execution
+            return f"{victim_name} was executed."
 
-        try:
-            if event_type == 'CHAMPION_KILL':
-                killer_id = event.get('killerId', 0)
-                victim_id = event.get('victimId')
-                killer_name = self.participant_map.get(killer_id, "Executioner")
-                victim_name = self.participant_map.get(victim_id, "Unknown Victim")
-                assist_ids = event.get('assistingParticipantIds', [])
-                assist_names = [self.participant_map.get(pid) for pid in assist_ids]
-                assist_str = f"(Assists: {', '.join(assist_names)})" if assist_names else ""
-                return f"[{time_str}] {killer_name} killed {victim_name} {assist_str}"
-            elif event_type in ['ITEM_PURCHASED', 'ITEM_SOLD']:
-                participant_name = self.participant_map.get(event.get('participantId'))
-                item_name = self.item_map.get(event.get('itemId'), "Unknown Item")
-                action = "purchased" if event_type == 'ITEM_PURCHASED' else "sold"
-                return f"[{time_str}] {participant_name} {action} {item_name}"
-            # ... other event formatters can be added here ...
-        except (KeyError, AttributeError):
-            return f"[{time_str}] Could not parse event: {event_type}"
+        killer_name = self.participant_map.get(killer_id, "Unknown Killer")
+        assist_str = ""
+        if 'assistingParticipantIds' in event:
+            assist_names = [self.participant_map.get(pid) for pid in event['assistingParticipantIds']]
+            assist_str = f"(Assists: {', '.join(assist_names)})"
+        
+        base_event = f"{killer_name} killed {victim_name} {assist_str}"
+        
+        if event['timestamp'] in multikill_timestamps:
+            multikill_name = multikill_timestamps[event['timestamp']]
+            return f"{base_event} and scored a {multikill_name}!"
+        return base_event
+
+    def _format_item_event(self, event):
+        p_name = self.participant_map.get(event['participantId'])
+        event_type = event['type']
+        if event_type in ['ITEM_PURCHASED', 'ITEM_SOLD', 'ITEM_DESTROYED']:
+            item_name = self.item_map.get(event['itemId'], "Unknown Item")
+
+        if event_type == 'ITEM_PURCHASED': return f"{p_name} purchased {item_name}."
+        if event_type == 'ITEM_SOLD': return f"{p_name} sold {item_name}."
+        if event_type == 'ITEM_DESTROYED': return f"{p_name}'s {item_name} was used/destroyed."
+        if event_type == 'ITEM_UNDO': 
+            before_name = self.item_map.get(event['beforeId'], "Unknown Item")
+            after_name = self.item_map.get(event['afterId'], "Unknown Item")
+            return f"{p_name} undid a purchase (from {before_name} to {after_name})."
+        return None
+
+    def _format_ward_event(self, event):
+        event_type = event['type']
+        ward_type = event.get('wardType', 'a ward').replace('_', ' ').title()
+        if event_type == 'WARD_PLACED':
+            placer_name = self.participant_map.get(event['creatorId'])
+            return f"{placer_name} placed a {ward_type}."
+        if event_type == 'WARD_KILL':
+            killer_name = self.participant_map.get(event['killerId'])
+            return f"{killer_name} cleared a {ward_type}."
+        return None
+
+    def _format_building_kill(self, event):
+        killer_name = self.participant_map.get(event['killerId'], "A minion")
+        lane = event.get('laneType', '').replace('_LANE', '')
+        building = event.get('buildingType', '').replace('_BUILDING', '').title()
+        team_id = 'Blue' if event['teamId'] == 100 else 'Red'
+        return f"{killer_name} destroyed the {team_id} team's {building} in the {lane} lane."
+
+    def _format_elite_monster_kill(self, event):
+        killer_name = self.participant_map.get(event['killerId'], "Someone")
+        monster_type = event.get('monsterType').replace('_', ' ').title()
+        return f"{killer_name} secured the {monster_type}."
+        
+    def _format_skill_level_up(self, event):
+        p_name = self.participant_map.get(event['participantId'])
+        skill = self.skill_map.get(event['skillSlot'], 'Unknown Skill')
+        return f"{p_name} leveled up their {skill} ({event['levelUpType'].title()})."
+
+    def _format_event(self, event, multikill_timestamps):
+        """Main event router. Calls a specific formatting function based on event type."""
+        event_type = event.get('type')
+        
+        # Mapping from event type to handler function
+        event_handlers = {
+            'CHAMPION_KILL': self._format_champion_kill,
+            'WARD_PLACED': self._format_ward_event,
+            'WARD_KILL': self._format_ward_event,
+            'BUILDING_KILL': self._format_building_kill,
+            'ELITE_MONSTER_KILL': self._format_elite_monster_kill,
+            'ITEM_PURCHASED': self._format_item_event,
+            'ITEM_SOLD': self._format_item_event,
+            'ITEM_DESTROYED': self._format_item_event,
+            'ITEM_UNDO': self._format_item_event,
+            'SKILL_LEVEL_UP': self._format_skill_level_up,
+        }
+
+        handler = event_handlers.get(event_type)
+        if not handler:
+            return None # Skip events we don't have a handler for
+
+        # Call the appropriate handler
+        if event_type == 'CHAMPION_KILL':
+            formatted_message = handler(event, multikill_timestamps)
+        else:
+            formatted_message = handler(event)
+        
+        if formatted_message:
+            timestamp_ms = event['timestamp']
+            time_str = f"{timestamp_ms // 60000:02d}:{(timestamp_ms % 60000) // 1000:02d}"
+            return f"[{time_str}] {formatted_message}"
+        
         return None
 
     def process_timeline(self) -> list:
-        # This method remains the same as before
+        """
+        Processes the timeline to create a human-readable list of all key events.
+        """
+        multikill_timestamps = self._find_multikill_timestamps()
+        
         processed_game = []
-        frames = self.timeline_data['info']['frames']
-
-        for i, frame in enumerate(frames):
+        for i, frame in enumerate(self.timeline_data['info']['frames']):
             minute_summary = {'minute': i, 'events': []}
+            
             for event in frame.get('events', []):
-                formatted_event = self._format_event(event)
+                # Call the main router for every event
+                formatted_event = self._format_event(event, multikill_timestamps)
                 if formatted_event:
                     minute_summary['events'].append(formatted_event)
-            if minute_summary['events']: # Only add frames that had key events
+
+            if minute_summary['events']:
                 processed_game.append(minute_summary)
         return processed_game
+    
+    def _find_multikill_timestamps(self) -> dict[int, str]:
+        kill_timestamps_by_player = defaultdict(list)
+        for frame in self.timeline_data['info']['frames']:
+            for event in frame.get('events', []):
+                if event.get('type') == 'CHAMPION_KILL' and event.get('killerId', 0) > 0:
+                    kill_timestamps_by_player[event['killerId']].append(event['timestamp'])
+        multikill_events = {}
+        for p_data in self.match_data['info']['participants']:
+            player_id = p_data['participantId']
+            timestamps = sorted(kill_timestamps_by_player.get(player_id, []))
+            multikill_counts = {5: p_data.get('pentaKills', 0), 4: p_data.get('quadraKills', 0), 3: p_data.get('tripleKills', 0), 2: p_data.get('doubleKills', 0)}
+            
+            
+            # timestamp_groups = []
+            i = 0
+            while i < len(timestamps):
+                multikill_found = False
+                for kill_count, num_multikills in multikill_counts.items():
+                    if num_multikills == 0: continue
+                    if i + kill_count <= len(timestamps):
+                        group = timestamps[i:i + kill_count]
+                        if group[-1] - group[0] <= self.MULTIKILL_WINDOW_MS:
+                            # timestamp_groups.append(group)
+                            multikill_events[timestamps[i]] = self.MULTIKILL_NAMES[kill_count]
+                            i += kill_count
+                            multikill_found = True
+                            break
+                if not multikill_found:
+                    i += 1
+                
+        return multikill_events
 
     def get_end_of_game_summary(self) -> list[dict]:
         """
@@ -125,6 +235,12 @@ class MatchTimelineParser:
 
         for p_data in participants:
             p_id = p_data.get('participantId')
+
+            multikill_parts = []
+            if p_data.get('doubleKills', 0) > 0: multikill_parts.append(f"{p_data['doubleKills']}x Double")
+            if p_data.get('tripleKills', 0) > 0: multikill_parts.append(f"{p_data['tripleKills']}x Triple")
+            if p_data.get('quadraKills', 0) > 0: multikill_parts.append(f"{p_data['quadraKills']}x Quadra")
+            if p_data.get('pentaKills', 0) > 0: multikill_parts.append(f"{p_data['pentaKills']}x Penta")
             
             # Get the final 6 items + trinket, converting IDs to names
             items = []
@@ -142,7 +258,8 @@ class MatchTimelineParser:
                 'damageToChamps': p_data.get('totalDamageDealtToChampions'),
                 'visionScore': p_data.get('visionScore'),
                 'items': items,
-                'teamId': p_data.get('teamId')
+                'teamId': p_data.get('teamId'),
+                'multikills_str': ", ".join(multikill_parts) or "None"
             }
             summaries.append(summary)
             

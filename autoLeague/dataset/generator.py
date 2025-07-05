@@ -134,16 +134,30 @@ class DataGenerator(object):
     
         try:
             response = requests.get(f"https://americas.api.riotgames.com/lol/match/v5/matches/{matchId}/timeline?api_key={self.api_key}")
+            response.raise_for_status()
             timeline_data = response.json()
-        except:
-            pass
+        except requests.exceptions.HTTPError as errh:
+            print("Timeline API HTTP Error:", errh)
+        except requests.exceptions.ConnectionError as errc:
+            print("Timeline API Connection Error:", errc)
+        except requests.exceptions.Timeout as errt:
+            print("Timeline API Timeout Error:", errt)
+        except requests.exceptions.RequestException as err:
+            print("Timeline API Request Exception:", err)
 
 
         try:
             response = requests.get(f"https://americas.api.riotgames.com/lol/match/v5/matches/{matchId}?api_key={self.api_key}")
+            response.raise_for_status()
             match_data = response.json()
-        except:
-            pass
+        except requests.exceptions.HTTPError as errh:
+            print("Match Data API HTTP Error:", errh)
+        except requests.exceptions.ConnectionError as errc:
+            print("Match Data API Connection Error:", errc)
+        except requests.exceptions.Timeout as errt:
+            print("Match Data API Timeout Error:", errt)
+        except requests.exceptions.RequestException as err:
+            print("Match Data API Request Exception:", err)
         
         print("Data fetched successfully.")
         
@@ -162,7 +176,7 @@ class DataGenerator(object):
             # Determine win/loss for the team
             status = "VICTORY" if team and team[0]['win'] else "DEFEAT"
             print(f"\n--- {team_name} ({status}) ---")
-            print(f"{'Player':<20} {'Champion':<15} {'KDA':<10} {'Damage':<8} {'Gold':<7} {'CS':<5} {'Vision':<5}")
+            print(f"{'Player':<20} {'Champion':<15} {'KDA':<10} {'Damage':<8} {'Gold':<7} {'CS':<5} {'Vision':<5} {'Multikills':<5}")
             print("-" * 80)
             for player in team:
                 print(
@@ -173,6 +187,7 @@ class DataGenerator(object):
                     f"{player['gold']:<7} "
                     f"{player['cs']:<5} "
                     f"{player['visionScore']:<5}"
+                    f"{player['multikills_str']}"
                 )
             # Print items for each player on a new line
             print("  Items:")

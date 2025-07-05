@@ -15,7 +15,7 @@ class ReplayDownlader(object):
         output, error = process.communicate()
 
         if error:
-            raise ProcessLookupError("롤 클라이언트 안켜짐")
+            raise ProcessLookupError("League of Legends Client is not running")
         else:
             cmd = output.strip().split('"')
             for i in cmd:

@@ -240,7 +240,7 @@ class LeagueDataCollector:
 if __name__ == '__main__':
     # 1. CONFIGURE YOUR PARAMETERS HERE
     # ---------------------------------
-    MY_API_KEY = 'RGAPI-f7d0be47-ba48-469e-b4e4-7bb93673ffd1' # IMPORTANT: Replace with your key
+    MY_API_KEY = 'RGAPI-2349ca5a-c5e2-402a-a1a0-f3a7cb9bff06' # IMPORTANT: Replace with your key
     TARGET_REGION = 'NA1'
     
     # Get today's date in the required format
