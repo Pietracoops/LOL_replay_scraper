@@ -3,6 +3,8 @@ import time
 from tqdm import tqdm
 from datetime import datetime
 from autoLeague.dataset.league_api_extractor import MatchTimelineParser
+import json
+import os
 
 '''데이터셋 생성기, 원하는 티어 입력해주면 해당 티어대의 리플레이들을 저장해준다.'''
 class DataGenerator(object):
@@ -130,7 +132,7 @@ class DataGenerator(object):
     
 
 
-    def get_match_timeline(self, matchId):
+    def get_match_data(self, matchId):
     
         try:
             response = requests.get(f"https://americas.api.riotgames.com/lol/match/v5/matches/{matchId}/timeline?api_key={self.api_key}")
@@ -159,35 +161,76 @@ class DataGenerator(object):
         except requests.exceptions.RequestException as err:
             print("Match Data API Request Exception:", err)
         
-        print("Data fetched successfully.")
+        # print("Data fetched successfully.")
         
 
         parser = MatchTimelineParser(match_data=match_data, timeline_data=timeline_data)
 
-        # --- 1. Get and Display End-of-Game Summary ---
-        print("\n\n" + "="*20 + " END-OF-GAME SUMMARY " + "="*20)
         end_game_summary = parser.get_end_of_game_summary()
 
         # Separate teams
         blue_team = sorted([p for p in end_game_summary if p['teamId'] == 100], key=lambda x: x['name'])
         red_team = sorted([p for p in end_game_summary if p['teamId'] == 200], key=lambda x: x['name'])
 
+        timeline_summary = parser.process_timeline()
+
+        unified_object = {
+            "matchId": matchId,
+            "summary": {
+                "blue_team": {
+                    "players": blue_team,
+                    "win": any(p['win'] for p in blue_team)
+                },
+                "red_team": {
+                    "players": red_team,
+                    "win": any(p['win'] for p in red_team)
+                }
+            },
+            "timeline_events": timeline_summary,
+            "raw_data": {
+                "match": match_data,
+                "timeline": timeline_data
+            }
+        }
+        
+        # print(f"Data for match {matchId} fetched and processed successfully.")
+        return unified_object
+
+    
+
+    def display_match_summary(self, match_data):
+        """
+        Takes a unified match data object and prints a formatted summary to the console.
+        """
+        if not match_data:
+            print("Cannot display summary: No match data provided.")
+            return
+
+        # --- 1. Display End-of-Game Summary ---
+        print("\n\n" + "="*20 + " END-OF-GAME SUMMARY " + "="*20)
+        
+        summary = match_data['summary']
+        blue_team = summary['blue_team']['players']
+        red_team = summary['red_team']['players']
+
         for team, team_name in [(blue_team, "BLUE TEAM"), (red_team, "RED TEAM")]:
-            # Determine win/loss for the team
             status = "VICTORY" if team and team[0]['win'] else "DEFEAT"
             print(f"\n--- {team_name} ({status}) ---")
-            print(f"{'Player':<20} {'Champion':<15} {'KDA':<10} {'Damage':<8} {'Gold':<7} {'CS':<5} {'Vision':<5} {'Multikills':<5}")
-            print("-" * 80)
+            print(f"{'Player':<20} {'Champion':<15} {'Level':<5} {'Position':<10} {'KDA':<10} {'Damage':<8} {'Gold':<7} {'CS':<5} {'Vision':<10} {'Multikills':<15} {'Win':<5}")
+            print("-" * 120)
             for player in team:
                 print(
                     f"{player['name']:<20} "
                     f"{player['champion']:<15} "
+                    f"{player['level']:<5} "
+                    f"{player['position']:<10} "
                     f"{player['kda']:<10} "
                     f"{player['damageToChamps']:<8} "
                     f"{player['gold']:<7} "
                     f"{player['cs']:<5} "
-                    f"{player['visionScore']:<5}"
-                    f"{player['multikills_str']}"
+                    f"{player['visionScore']:<10}"
+                    f"{player['multikills_str']:<15}"
+                    f"{player['win']:<5}"
                 )
             # Print items for each player on a new line
             print("  Items:")
@@ -195,11 +238,10 @@ class DataGenerator(object):
                 final_items = [item for item in player['items'] if item != 'No Item']
                 print(f"    {player['name']:<18}: {', '.join(final_items)}")
 
-
-        # --- 2. Get and Display Key Timeline Events ---
+        # --- 2. Display Key Timeline Events ---
         print("\n\n" + "="*20 + " KEY TIMELINE EVENTS " + "="*21)
-        timeline_summary = parser.process_timeline()
-
+        
+        timeline_summary = match_data['timeline_events']
         for minute_data in timeline_summary:
             minute = minute_data['minute']
             # Only print minutes where something actually happened
@@ -209,6 +251,65 @@ class DataGenerator(object):
                     print(event)
 
 
-        return None
-    
-    
+
+    # =====================================================================
+    # NEW FUNCTION 1: SAVE DATA TO A FILE
+    # =====================================================================
+    def save_match_data_to_file(self, match_data, file_path):
+        """
+        Serializes the match data object to a JSON file.
+
+        Args:
+            match_data (dict): The unified match data object.
+            file_path (str): The path to the file where data will be saved.
+        """
+        if not match_data:
+            print("Error: No data provided to save.")
+            return False
+
+        try:
+            # Create the directory if it doesn't exist
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            
+            # Open the file in write mode ('w') with utf-8 encoding
+            with open(file_path, 'w', encoding='utf-8') as f:
+                # Use json.dump() to write the dictionary to the file
+                # indent=4 makes the file human-readable
+                json.dump(match_data, f, indent=4)
+            
+            # print(f"Successfully saved match data to {file_path}")
+            return True
+        except (IOError, TypeError) as e:
+            print(f"Error saving data to file {file_path}: {e}")
+            return False
+
+    # =====================================================================
+    # NEW FUNCTION 2: LOAD DATA FROM A FILE
+    # =====================================================================
+    def load_match_data_from_file(self, file_path):
+        """
+        Loads and deserializes match data from a JSON file.
+
+        Args:
+            file_path (str): The path to the JSON file.
+        
+        Returns:
+            dict: The loaded match data object, or None if an error occurs.
+        """
+        try:
+            # Open the file in read mode ('r') with utf-8 encoding
+            with open(file_path, 'r', encoding='utf-8') as f:
+                # Use json.load() to read the data and parse it into a Python dict
+                data = json.load(f)
+            
+            # print(f"Successfully loaded match data from {file_path}")
+            return data
+        except FileNotFoundError:
+            print(f"Error: The file {file_path} was not found.")
+            return None
+        except json.JSONDecodeError:
+            print(f"Error: The file {file_path} contains invalid JSON.")
+            return None
+        except IOError as e:
+            print(f"Error reading data from file {file_path}: {e}")
+            return None

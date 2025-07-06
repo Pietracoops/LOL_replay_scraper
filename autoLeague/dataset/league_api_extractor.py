@@ -103,7 +103,7 @@ class MatchTimelineParser:
             # Add a value for unknown perks
             perk_map[0] = "Unknown Perk"
             
-            print("Successfully built perk map.")
+            # print("Successfully built perk map.")
             return perk_map
             
         except requests.exceptions.RequestException as e:
@@ -345,7 +345,8 @@ class MatchTimelineParser:
                 'items': items,
                 'teamId': p_data.get('teamId'),
                 'multikills_str': ", ".join(multikill_parts) or "None",
-                'perks': processed_perks
+                'perks': processed_perks,
+                'win': p_data.get('win', False),
             }
             summaries.append(summary)
             

@@ -64,6 +64,8 @@ class LeagueDataCollector:
         self.patch_start_datetime = patch_start_datetime
         self.tiers_and_counts = tiers_and_counts
         self.replays_dir = replays_dir
+        self.dataset_dir = dataset_dir
+        self.scraper_dir = scraper_dir
         
         # This will hold the unique match IDs gathered
         self.match_ids = []
@@ -213,13 +215,17 @@ class LeagueDataCollector:
         self._download_replays()
         print("\n--- Download Pipeline Finished ---")
 
-    def get_match_timeline(self, matchId):
-        """
-        Executes the download pipeline:
-        1. Fetches match IDs.
-        2. Downloads replays.
-        """
-        self.dg.get_match_timeline(matchId)
+    def get_match_data(self, matchId, directory):
+        match_data_dir = f"{directory}\\{matchId}.json"
+        match_data = self.dg.get_match_data(matchId)
+        self.dg.save_match_data_to_file(match_data, match_data_dir)
+        # print("Match data saved to", match_data_dir)
+
+    def load_match_data_from_file(self, match_data_dir):
+        match_data = self.dg.load_match_data_from_file(match_data_dir)
+        # self.dg.display_match_summary(match_data)
+
+        return match_data
 
     def run_pipeline(self):
         """
@@ -257,7 +263,7 @@ if __name__ == '__main__':
     # Use raw strings (r'...') to avoid issues with backslashes
     LEAGUE_GAME_DIR = r'C:\Riot Games\League of Legends\Game'
     LEAGUE_REPLAYS_DIR = r'C:\Users\massimo\Documents\League of Legends\Replays'
-    DATASET_OUTPUT_DIR = r'E:\LeagueDataset\output'
+    DATASET_OUTPUT_DIR = r'C:\Users\massimo\Documents\League of Legends\Replays'
     SCRAPER_ASSETS_DIR = r'E:\dev\pyLoL\autoLeague\replays' # As in your original script
 
     
@@ -275,11 +281,36 @@ if __name__ == '__main__':
             scraper_dir=SCRAPER_ASSETS_DIR
         )
 
-        data_collector.get_match_timeline("NA1_5318305918")
+        
 
-        # 3. RUN THE ENTIRE PIPELINE
+        # RUN THE ENTIRE PIPELINE TO COLLECT DATA
         # ----------------------------
-        data_collector.run_download_pipeline()
+        # data_collector.run_download_pipeline()
+
+        # GET ALL GAMES IN REPLAY DIRECTORY AND GET MATCH_DATA FOR EACH
+        # Note: the rofl files look like this: NA1-5314111954.rofl and the match_id look like this NA1_5314111954
+        # ----------------------------
+        # Gather all replay files to process
+        replay_files = [
+            replay for replay in os.listdir(data_collector.replays_dir)
+            if replay.endswith(".rofl")
+        ]
+
+        # Filter only those that need processing
+        to_process = []
+        for replay in replay_files:
+            match_id = replay.split('.')[0].replace("-", "_")
+            output_path = os.path.join(data_collector.dataset_dir, f"{match_id}.json")
+            if not os.path.exists(output_path):
+                to_process.append((replay, match_id, output_path))
+
+        # Use tqdm to show progress
+        for replay, match_id, output_path in tqdm(to_process, desc="Processing replays"):
+            data_collector.get_match_data(match_id, data_collector.dataset_dir)
+            time.sleep(0.05)
+
+
+        # data_collector.get_match_data("NA1_5318305918")
 
     except FileNotFoundError as e:
         print(f"ERROR: A directory was not found. Please check your paths. Details: {e}")
