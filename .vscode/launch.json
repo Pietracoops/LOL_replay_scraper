@@ -18,6 +18,13 @@
             "request": "launch",
             "program": "${workspaceFolder}/replay_downloader.py",
             "console": "integratedTerminal"
+        },
+                {
+            "name": "Win Classifier",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/autoLeague/ml/win_predictor.py",
+            "console": "integratedTerminal"
         }
     ]
 }

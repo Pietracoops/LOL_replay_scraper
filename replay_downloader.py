@@ -215,6 +215,30 @@ class LeagueDataCollector:
         self._download_replays()
         print("\n--- Download Pipeline Finished ---")
 
+
+    def run_data_extraction_pipeline(self):
+                # GET ALL GAMES IN REPLAY DIRECTORY AND GET MATCH_DATA FOR EACH
+        # Note: the rofl files look like this: NA1-5314111954.rofl and the match_id look like this NA1_5314111954
+        # ----------------------------
+        # Gather all replay files to process
+        replay_files = [
+            replay for replay in os.listdir(self.replays_dir)
+            if replay.endswith(".rofl")
+        ]
+
+        # Filter only those that need processing
+        to_process = []
+        for replay in replay_files:
+            match_id = replay.split('.')[0].replace("-", "_")
+            output_path = os.path.join(self.dataset_dir, f"{match_id}.json")
+            if not os.path.exists(output_path):
+                to_process.append((replay, match_id, output_path))
+
+        # Use tqdm to show progress
+        for replay, match_id, output_path in tqdm(to_process, desc="Processing replays"):
+            self.get_match_data(match_id, self.dataset_dir)
+            time.sleep(0.05)
+
     def get_match_data(self, matchId, directory):
         match_data_dir = f"{directory}\\{matchId}.json"
         match_data = self.dg.get_match_data(matchId)
@@ -287,30 +311,15 @@ if __name__ == '__main__':
         # ----------------------------
         # data_collector.run_download_pipeline()
 
-        # GET ALL GAMES IN REPLAY DIRECTORY AND GET MATCH_DATA FOR EACH
-        # Note: the rofl files look like this: NA1-5314111954.rofl and the match_id look like this NA1_5314111954
-        # ----------------------------
-        # Gather all replay files to process
-        replay_files = [
-            replay for replay in os.listdir(data_collector.replays_dir)
-            if replay.endswith(".rofl")
-        ]
+        # data_collector.run_data_extraction_pipeline()
 
-        # Filter only those that need processing
-        to_process = []
-        for replay in replay_files:
-            match_id = replay.split('.')[0].replace("-", "_")
-            output_path = os.path.join(data_collector.dataset_dir, f"{match_id}.json")
-            if not os.path.exists(output_path):
-                to_process.append((replay, match_id, output_path))
 
-        # Use tqdm to show progress
-        for replay, match_id, output_path in tqdm(to_process, desc="Processing replays"):
-            data_collector.get_match_data(match_id, data_collector.dataset_dir)
-            time.sleep(0.05)
 
 
         # data_collector.get_match_data("NA1_5318305918")
+        match_data = data_collector.load_match_data_from_file("C:\\Users\\massimo\\Documents\\League of Legends\\Replays\\NA1_5314111954.json")
+
+        print("done")
 
     except FileNotFoundError as e:
         print(f"ERROR: A directory was not found. Please check your paths. Details: {e}")
