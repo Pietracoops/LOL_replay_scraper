@@ -1,5 +1,6 @@
 import requests
 from collections import defaultdict
+import json
 
 class MatchTimelineParser:
     """
@@ -29,6 +30,7 @@ class MatchTimelineParser:
         self.item_map = self._build_item_map()
         self.participant_map = self._build_participant_map()
         self.perks_map = self._build_perk_map()
+        self.champion_map = self._build_champion_map()
         self.MULTIKILL_WINDOW_MS = 10000
         self.MULTIKILL_NAMES = {2: "Double Kill", 3: "Triple Kill", 4: "Quadra Kill", 5: "Penta Kill"}
         self.skill_map = {1: 'Q', 2: 'W', 3: 'E', 4: 'R'}
@@ -58,6 +60,27 @@ class MatchTimelineParser:
         except requests.exceptions.RequestException as e:
             print(f"Error fetching item data: {e}")
             return {0: "No Item"}
+        
+    def _build_champion_map(self) -> dict:
+        version = self._get_latest_game_version()
+        champ_url = f"http://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/champion.json"
+        
+        try:
+            response = requests.get(champ_url)
+            response.raise_for_status()
+            champ_data = response.json()['data']
+            # The 'key' field is the champion's numeric ID as a string
+            champ_map = {int(data['key']): data['name'] for data in champ_data.values()}
+            # Add a value for no champion
+            champ_map[0] = "No Champion"
+
+            with open("champion_map.json", "w", encoding="utf-8") as f:
+                json.dump(champ_map, f, ensure_ascii=False, indent=4)
+
+            return champ_map
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching champion data: {e}")
+            return {0: "No Champion"}
         
     def _build_perk_map(self) -> dict:
         """

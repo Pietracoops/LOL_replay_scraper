@@ -10,6 +10,8 @@ from autoLeague.dataset.downloader import ReplayDownlader as rd
 from autoLeague.replays.scraper import ReplayScraper
 # from autoLeague.replays.editor import ImageEditor # This was imported but not used in the main logic
 
+from autoLeague.ml.win_predictor import process_match_win_percentages
+
 class LeagueDataCollector:
     """
     A class to automate the process of collecting League of Legends match data.
@@ -37,7 +39,7 @@ class LeagueDataCollector:
         'VN2': 'vn2.api.riotgames.com'
     }
 
-    def __init__(self, api_key: str, region: str, patch_start_datetime: str,
+    def __init__(self, api_keys: str, region: str, patch_start_datetime: str,
                  tiers_and_counts: dict, game_dir: str, replays_dir: str,
                  dataset_dir: str, scraper_dir: str):
         """
@@ -59,7 +61,8 @@ class LeagueDataCollector:
             raise ValueError(f"Invalid region '{region}'. Please choose from {list(self.AVAILABLE_REGIONS.keys())}")
         
         # --- Configuration Attributes ---
-        self.api_key = api_key
+        self.api_key = api_keys[0]
+        self.api_keys = api_keys
         self.region = region.upper()
         self.patch_start_datetime = patch_start_datetime
         self.tiers_and_counts = tiers_and_counts
@@ -72,7 +75,7 @@ class LeagueDataCollector:
 
         # --- Initialize Helper Classes ---
         print("Initializing helper components...")
-        self.dg = dg(api_key=self.api_key, count=20)
+        self.dg = dg(api_keys=self.api_keys, count=20)
         self.rd = rd()
         self.rd.set_replays_dir(self.replays_dir)
         
@@ -117,6 +120,68 @@ class LeagueDataCollector:
         self.match_ids = list(set(all_match_ids))
         print(f"\nTotal unique match IDs found: {len(self.match_ids)}")
 
+    def _fetch_match_ids_unfiltered(self, match_id_file="match_ids.txt"):
+        """
+        Fetches match IDs for the configured tiers and counts.
+        (Internal method)
+        """
+        print(f"--- Starting Match ID Fetch for Region: {self.region} ---")
+        all_match_ids = []
+        for tier, count in self.tiers_and_counts.items():
+            print(f"Fetching {count} match IDs for tier: {tier.upper()}...")
+            try:
+                # The original script uses `dg.method(dg, ...)` which is unusual.
+                # Assuming standard OOP call is `self.dg.method(...)`
+                ids = self.dg.get_tier_matchIds_unfiltered(
+                    queue='RANKED_SOLO_5x5',
+                    tier=tier.upper(),
+                    division='I', # Division is typically 'I' for high elo
+                    max_ids=count
+                    # NOTE: We need to pass the region to this function if it requires it.
+                    # This depends on the implementation of `DataGenerator`. Let's assume
+                    # it implicitly uses the region or it's not needed here.
+                )
+                print(f"Found {len(ids)} {tier.upper()} matches.")
+                all_match_ids.extend(ids)
+            except Exception as e:
+                print(f"Could not fetch matches for tier {tier.upper()}: {e}")
+
+        # Remove duplicates
+        fetched_match_ids = list(set(all_match_ids))
+
+        # Load existing match IDs from file
+        existing_match_ids = self.load_match_ids_from_file(match_id_file)
+
+        print(f"Loaded {len(existing_match_ids)} match IDs from file.")
+
+        # Find new match IDs
+        self.match_ids = list(set(fetched_match_ids) - set(existing_match_ids))
+        print(f"New match IDs to add: {len(self.match_ids)}")
+
+        # Update the file if there are new match IDs
+        if self.match_ids:
+            with open(match_id_file, 'a') as f:
+                for match_id in self.match_ids:
+                    f.write(f"{match_id}\n")
+            print(f"Appended {len(self.match_ids)} new match IDs to {match_id_file}.")
+        else:
+            print("No new match IDs to add.")
+
+        print(f"\nTotal unique match IDs found: {len(self.match_ids)}")
+
+
+    def load_match_ids_from_file(self, match_id_file="match_ids.txt"):
+
+        # Load existing match IDs from file
+        existing_match_ids = set()
+        if os.path.exists(match_id_file):
+            with open(match_id_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        existing_match_ids.add(line)
+
+        return existing_match_ids
 
     def _download_replays(self):
         """
@@ -215,6 +280,10 @@ class LeagueDataCollector:
         self._download_replays()
         print("\n--- Download Pipeline Finished ---")
 
+    def get_match_ids(self):
+        self._fetch_match_ids()
+        return self.match_ids
+
 
     def run_data_extraction_pipeline(self):
                 # GET ALL GAMES IN REPLAY DIRECTORY AND GET MATCH_DATA FOR EACH
@@ -241,6 +310,10 @@ class LeagueDataCollector:
 
     def get_match_data(self, matchId, directory):
         match_data_dir = f"{directory}\\{matchId}.json"
+        # Check if file exists
+        if os.path.exists(match_data_dir):
+            print("Match data already exists for", matchId)
+            return
         match_data = self.dg.get_match_data(matchId)
         self.dg.save_match_data_to_file(match_data, match_data_dir)
         # print("Match data saved to", match_data_dir)
@@ -264,13 +337,38 @@ class LeagueDataCollector:
         print("\n--- Pipeline Finished ---")
 
 
+    def build_winrate_dataset(self):
+        # Get the match IDS
+        self._fetch_match_ids_unfiltered()
+
+        # Get the match data for each match ID
+        # Load the match data from file
+        match_ids = self.load_match_ids_from_file()
+
+        # Use tqdm to show progress
+        for match_id in tqdm(match_ids, desc="Processing replays"):
+            while True:
+                try:
+                    self.get_match_data(match_id, self.dataset_dir)
+                    break
+                except Exception as e:
+                    print(f"An error occurred while processing {match_id}: {e}")
+                    print("Waiting for one minute before retrying...")
+                    # Make a loading bar with a timer
+                    for i in tqdm(range(60), desc='Waiting for one minute', unit='s'):
+                        time.sleep(1)
+
 # ==============================================================================
 # --- EXAMPLE USAGE ---
 # ==============================================================================
 if __name__ == '__main__':
     # 1. CONFIGURE YOUR PARAMETERS HERE
     # ---------------------------------
-    MY_API_KEY = 'RGAPI-2349ca5a-c5e2-402a-a1a0-f3a7cb9bff06' # IMPORTANT: Replace with your key
+    MY_API_KEY = 'RGAPI-ef6d2e2e-96c1-4495-b1c9-9e92df7c49b3' # IMPORTANT: Replace with your key
+    API_KEYS = ["RGAPI-ef6d2e2e-96c1-4495-b1c9-9e92df7c49b3", # Domingoduck
+                "RGAPI-8f16f3d0-b501-4baa-9eab-e101e3293a36", # 2Taciturn
+                "RGAPI-db3f8506-9bc5-4fda-9893-f60cfe990a56", # Mastrixx
+                "RGAPI-4bf36594-5327-4b02-9751-d00667010ae2"] # RAC
     TARGET_REGION = 'NA1'
     
     # Get today's date in the required format
@@ -278,9 +376,11 @@ if __name__ == '__main__':
 
     # Specify which tiers you want and how many matches from each
     TIERS_TO_COLLECT = {
-        'CHALLENGER': 100,
-        'GRANDMASTER': 200,
-        'MASTER': 300
+        'CHALLENGER': 1,
+        'GRANDMASTER': 1,
+        'MASTER': 1,
+        'DIAMOND': 1,
+        'EMERALD': 1
     }
     
     # --- IMPORTANT: SET YOUR DIRECTORY PATHS ---
@@ -295,7 +395,7 @@ if __name__ == '__main__':
     # -------------------------------
     try:
         data_collector = LeagueDataCollector(
-            api_key=MY_API_KEY,
+            api_keys=API_KEYS,
             region=TARGET_REGION,
             patch_start_datetime=PATCH_START_DATE,
             tiers_and_counts=TIERS_TO_COLLECT,
@@ -305,7 +405,7 @@ if __name__ == '__main__':
             scraper_dir=SCRAPER_ASSETS_DIR
         )
 
-        
+        data_collector.build_winrate_dataset()
 
         # RUN THE ENTIRE PIPELINE TO COLLECT DATA
         # ----------------------------
@@ -314,10 +414,9 @@ if __name__ == '__main__':
         # data_collector.run_data_extraction_pipeline()
 
 
-
-
-        # data_collector.get_match_data("NA1_5318305918")
-        match_data = data_collector.load_match_data_from_file("C:\\Users\\massimo\\Documents\\League of Legends\\Replays\\NA1_5314111954.json")
+        # data_collector.get_match_data("NA1_5318305918", DATASET_OUTPUT_DIR)
+        # match_data = data_collector.load_match_data_from_file("C:\\Users\\massimo\\Documents\\League of Legends\\Replays\\NA1_5314111954.json")
+        # win_percentages = process_match_win_percentages(match_data)
 
         print("done")
 

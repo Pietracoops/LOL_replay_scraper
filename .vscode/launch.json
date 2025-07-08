@@ -19,12 +19,27 @@
             "program": "${workspaceFolder}/replay_downloader.py",
             "console": "integratedTerminal"
         },
-                {
+        {
             "name": "Win Classifier",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/autoLeague/ml/win_predictor.py",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder};${env:PYTHONPATH}"
+            }
+        },
+        {
+            "name": "Get Matchup Winrates",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/autoLeague/ml/matchup_winrates.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder};${env:PYTHONPATH}"
+            }
         }
     ]
 }

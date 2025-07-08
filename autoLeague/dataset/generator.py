@@ -13,8 +13,11 @@ class DataGenerator(object):
         api_key : riot api key
         count : match per each player
     '''
-    def __init__(self , api_key , count):
-        self.api_key = api_key
+    def __init__(self , api_keys , count):
+        self.api_key = api_keys[0]
+        self.api_keys = api_keys
+        self.key_blocked_until = [0 for _ in api_keys]  # Timestamps (seconds since epoch) when each key is unblocked
+        self.current_key_index = 0
         self.count = count
 
     '''
@@ -26,8 +29,14 @@ class DataGenerator(object):
         page = 1             #페이지 초기값
         summoners = []       #소환사 명단
         while True:
-            datas = requests.get(f'https://na1.api.riotgames.com/lol/league-exp/v4/entries/{queue}/{tier}/{division}?page={page}&api_key={self.api_key}').json()
-            print(f"gathering datas by Riot_API... {page}")
+            try:
+                datas = requests.get(f'https://na1.api.riotgames.com/lol/league-exp/v4/entries/{queue}/{tier}/{division}?page={page}&api_key={self.api_key}').json()
+                print(f"gathering datas by Riot_API... {page}")
+                if len(datas) > 0:
+                    data_1 = datas[0]['leagueId'] # Test to see if we received a message
+            except Exception as e:
+                print(f"Failed to receive data from API: {e}")
+                break
             time.sleep(0.05)
             if len(datas) == 0 or page > 30 :
                 break
@@ -101,8 +110,56 @@ class DataGenerator(object):
                 pass
                 
         return matchIdsOver15
+
+    def switch_to_next_key(self):
+        self.current_key_index += 1
+        if self.current_key_index >= len(self.api_keys):
+            self.current_key_index = 0
+            return False  # All keys have been tried
+        return True
     
-    #get matchids { precondition : queue(=랭크 타입) , tier(=티어), division(=단계, 예:I,II,III,IV) , patch_start_datetime(=패치시작일, 예: '2023.10.08') }
+    def get_available_key_index(self):
+        now = time.time()
+        for i, unblock_time in enumerate(self.key_blocked_until):
+            if now >= unblock_time:
+                return i
+        return None  # No key available
+    
+    def get_next_unblock_time(self):
+        return min(self.key_blocked_until)
+    
+    def get_match_ids_no_filter(self, puuid):
+        if puuid == None:
+            return []
+        
+        time.sleep(0.05)
+
+        while True:
+            key_index = self.get_available_key_index()
+            if key_index is None:
+                # All keys are blocked, wait until the soonest one is available
+                wait_seconds = max(0, self.get_next_unblock_time() - time.time())
+                print(f"All API keys are rate-limited. Waiting {int(wait_seconds)} seconds...")
+                for i in tqdm(range(int(wait_seconds) + 1), desc='Waiting for next key to unblock', unit='s'):
+                    time.sleep(1)
+                continue
+            api_key = self.api_keys[key_index]
+            url = f'https://americas.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids?queue=420&type=ranked&start=0&count={self.count}&api_key={api_key}'
+            try:
+                response = requests.get(url)
+                matchIds = response.json()
+                if 'status' in matchIds and matchIds['status']['status_code'] == 429:
+                    # Mark this key as blocked for 2 minutes from now
+                    self.key_blocked_until[key_index] = time.time() + 120
+                    print(f"API key {key_index} is rate-limited. Blocked for 2 minutes.")
+                    continue
+                else:
+                    break
+            except:
+                break    #get matchids { precondition : queue(=랭크 타입) , tier(=티어), division(=단계, 예:I,II,III,IV) , patch_start_datetime(=패치시작일, 예: '2023.10.08') }
+
+        return matchIds
+        
     def get_tier_matchIds(self, queue, tier, division , max_ids, patch_start_datetime):
     
         # process : queue, tier, division -> summonerId(s)
@@ -119,6 +176,37 @@ class DataGenerator(object):
 
                 new_ids = self.get_matchIds(summoner['puuid'], patch_start_datetime)
                 matchIds.extend(new_ids)
+
+                # Update the bar again to show the new total count
+                progress_bar.set_postfix_str(f"Total Matches Found: {len(matchIds)}")
+
+            except Exception as e:
+                tqdm.write(f"Could not fetch matches for summoner with puuid {summoner.get('puuid', 'N/A')}: {e}")
+
+        print(matchIds)
+
+        return matchIds
+    
+    def get_tier_matchIds_unfiltered(self, queue, tier, division ,max_ids):
+    
+        # process : queue, tier, division -> summonerId(s)
+        summoners = self.get_summonerIds(queue , tier , division)
+        matchIds = []
+
+        # # Gathering Match IDs
+        # for summoner in summoners:
+        #     matchIds.extend(self.get_matchIds(summoner['puuid'],patch_start_datetime))
+
+        progress_bar = tqdm(summoners, desc="Fetching match IDs")
+        for summoner in progress_bar:
+            try:
+
+                new_ids = self.get_match_ids_no_filter(summoner['puuid'])
+                matchIds.extend(new_ids)
+                with open('tmp_matchids.txt', 'a') as f:
+                    for match_id in new_ids:
+                        if not match_id.startswith('status'):
+                            f.write(match_id + '\n')
 
                 # Update the bar again to show the new total count
                 progress_bar.set_postfix_str(f"Total Matches Found: {len(matchIds)}")
